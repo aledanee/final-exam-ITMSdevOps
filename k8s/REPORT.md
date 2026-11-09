@@ -117,6 +117,46 @@ GET  /api/tasks/1     -> 404   (after delete)
 
 ## 3. Horizontal autoscaling under load
 
+### Manifest (included as required — `k8s/hpa.yaml`)
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+  namespace: task-manager
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 1
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0      # react immediately to a spike
+    scaleDown:
+      stabilizationWindowSeconds: 300    # wait 5 idle minutes before shrinking
+```
+
+### Why these specific thresholds
+
+| Setting | Value | Justification (with metrics) |
+|---|---|---|
+| Metric | **CPU utilization, target 60 %** | Measured baseline idle = **1 %**; during load pods drew **269–497 %** of their request. 60 % sits far above noise and far below the 500 m limit, so scaling triggers on real overload with ~40 % headroom left |
+| `minReplicas` | **1** | Matches the assignment's `spec.replicas: 1`; idle CPU of 1 % proves one pod is enough at rest |
+| `maxReplicas` | **6** | Bounds cost/pressure on a single-node cluster; MySQL (single RWO pod) is the real ceiling, so more than 6 API pods adds no useful capacity |
+| `scaleUp: 0 s` | instant | Load spikes arrive in seconds — evidence: **1 → 5 replicas within ~40 s** of the test starting |
+| `scaleDown: 300 s` | patient | Prevents flapping on brief dips — evidence: replicas returned to 1 only **after 5 idle minutes**, never oscillating |
+| Prerequisite | `metrics-server` | HPA needs CPU metrics; enabled via `minikube addons enable metrics-server` |
+
 Enabled with `minikube addons enable metrics-server`. Load generated **inside the cluster**
 by a `wget` loop pod (no external tooling):
 
