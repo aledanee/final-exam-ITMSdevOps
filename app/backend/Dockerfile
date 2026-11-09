@@ -18,4 +18,7 @@ COPY --from=build /app/publish .
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 
+# run as the image's built-in non-root user (never as root)
+USER $APP_UID
+
 ENTRYPOINT ["dotnet", "TaskManager.dll"]

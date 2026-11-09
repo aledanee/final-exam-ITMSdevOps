@@ -42,6 +42,10 @@ ENTRYPOINT ["dotnet", "TaskManager.dll"]
   published as `8.0-bookworm-slim` (verified against MCR).
 * **Kestrel**, ASP.NET Core's built-in web server, serves the app.
   `ASPNETCORE_URLS=http://+:8080` binds it inside the container; no reverse proxy is used.
+* **Runs as a non-root user:** the final stage ends with `USER $APP_UID`, so the process runs
+  as the image's built-in `app` user (**uid 1654**), not root.
+  *Assumption:* port 8080 is unprivileged, `/app` is world-readable and the app writes nothing
+  to disk, so no root privileges are required.
 * Restores from the `.csproj` in its own layer (cached) before copying `Program.cs`.
 
 ## 4. docker-compose.yaml
@@ -108,6 +112,7 @@ PUT    /api/tasks/1              → 200 updated (verified in MySQL)
 DELETE /api/tasks/2              → 204, row removed (verified in MySQL)
 POST   invalid (no title)        → 400
 GET    /swagger/index.html       → 200
+docker exec taskmanager-api id   → uid=1654(app)  (container runs non-root)
 
 # named volume persistence
 docker compose down && docker compose up -d   → row still present after full teardown
