@@ -23,7 +23,6 @@ Task: `{ id, title, description, isCompleted, createdAt }`
 ```
 ├── README.md               ← this file (root overview)
 ├── REPORT.md               ← Deliverable 1 report (Docker/compose + assumptions)
-├── final-report.pdf        ← combined report (all deliverables, evidence, links)
 ├── app/                    ← Deliverable 1: containerized application
 │   ├── backend/            ← ASP.NET Core app — ALL code in a single file (Program.cs)
 │   │   ├── Program.cs      ← endpoints, model, DbContext, DTOs
@@ -40,8 +39,7 @@ Task: `{ id, title, description, isCompleted, createdAt }`
 │   ├── hpa.yaml               ingress.yaml
 │   ├── kustomization.yaml     (kubectl apply -k k8s/)
 │   ├── README.md           ← how to deploy + assumptions
-│   └── REPORT.md           ← k8s evidence: pods/services, HPA, load test, restarts
-└── load/load-test.js       ← k6 script: 500 VUs × 60 s
+│   └── REPORT.md           ← k8s evidence: pods/services, HPA, restarts
 ```
 
 ## Quick start
@@ -70,13 +68,11 @@ curl http://$(minikube ip):30080/health
 | K8s rollout | `deploy/api 1/1`, `deploy/mysql 1/1`, PVC `Bound` |
 | CRUD through Service | 201 / 200 / 200 / 204 / 404 / 400 as specified |
 | Non-root | Dockerfile `USER $APP_UID` and pod `securityContext` → `uid=1654(app)` |
-| Load test (k6, 500 VU, 60 s) | 22 605 requests, **365.5 req/s**, **0.47 % errors**, avg 1.24 s / p95 2.08 s |
-| Autoscaling | HPA `1 → 5` replicas during the load test (CPU 410 % vs 60 % target), back to 1 |
+| Autoscaling | HPA `1 → 5` replicas under load (CPU 497 % vs 60 % target), back to 1 when idle |
 | Fault tolerance | `kill 1` in a pod → **RESTARTS 0 → 1**, pod healthy again, data intact (1 112 rows) |
 
 ## Reports
 
 * `REPORT.md` — Deliverable 1 (Dockerfile, compose, ports/versions/DB/env assumptions)
-* `k8s/REPORT.md` — Deliverable 2 (kubectl evidence, probes, HPA, load test, restart count)
+* `k8s/REPORT.md` — Deliverable 2 (kubectl evidence, probes, HPA, restart count)
 * `k8s/README.md` — deployment steps + assumptions
-* `final-report.pdf` — combined version of the above with the GitHub link

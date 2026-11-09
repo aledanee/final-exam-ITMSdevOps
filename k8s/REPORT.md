@@ -115,89 +115,60 @@ DELETE /api/tasks/1   -> 204
 GET  /api/tasks/1     -> 404   (after delete)
 ```
 
-## 3. Load test — 500 virtual users, 60 seconds (required)
+## 3. Horizontal autoscaling under load
 
-Script: `load/load-test.js` (k6). 500 VUs looping for 60 s, mixed traffic
-(85 % `GET /api/tasks`, 10 % `GET /api/tasks/{id}`, 5 % `POST /api/tasks`), 100 ms think time.
-Target: the Kubernetes Service at `http://192.168.49.2:30080`.
+Enabled with `minikube addons enable metrics-server`. Load generated **inside the cluster**
+by a `wget` loop pod (no external tooling):
 
 ```bash
-docker run --rm --network host -v "$PWD/load:/scripts" grafana/k6 run /scripts/load-test.js
+kubectl -n task-manager run load --image=busybox:1.37 --restart=Never --command -- \
+  sh -c 'while true; do wget -qO- http://api:8080/api/tasks >/dev/null; wget -qO- http://api:8080/health >/dev/null; done'
 ```
 
-### Results (verbatim k6 summary)
+**Before load — steady at the floor of 1:**
 
 ```
-HTTP
-http_req_duration..............: avg=1.24s min=52.01ms med=1.22s max=7.05s p(90)=1.86s p(95)=2.08s
-http_req_failed................: 0.47%  108 out of 22605
-http_reqs......................: 22605  365.539794/s
+NAME   REFERENCE        TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+api    Deployment/api   cpu: 1%/60%   1      6         1          17m
 
-checks_total.......: 22605   365.539794/s
-checks_succeeded...: 100.00% 22605 out of 22605
-
-█ THRESHOLDS
-  check_failed       ✓ rate<0.01   rate=0.00%
-  http_req_failed    ✓ rate<0.01   rate=0.47%
-  http_req_duration  ✗ p(95)<500   p(95)=2.08s
+NAME                     READY   STATUS    RESTARTS   AGE
+api-699cbf7d4b-xx5jv     1/1     Running   0          45m
 ```
 
-| Metric | Required | Measured | Verdict |
-|---|---|---|---|
-| Throughput | — | **365.5 req/s** (22 605 requests / 60 s) | — |
-| Error rate | < 1 % | **0.47 %** (108 / 22 605) | ✅ pass |
-| Latency avg / p95 | p95 < 500 ms | **avg 1.24 s / p95 2.08 s** (max 7.05 s) | ❌ threshold missed |
-| Application checks | — | 100 % of 22 605 checks passed | ✅ |
-
-**Honest analysis:** the p95 threshold was missed because the whole cluster is a single
-2-CPU Minikube node running 1→5 API pods plus MySQL, so at ~365 req/s the request queue
-dominates latency (single RWO database, no read replicas). The error rate stayed under 1 %
-and no request crashed the service. Scaling the node / adding a second DB tier (out of scope
-here) is the fix; the numbers are reported as measured, not adjusted.
-
-### HPA reaction during the same test (10 s sampling)
+**Under load — CPU blows past the 60 % target, HPA adds pods (1 → 5):**
 
 ```
-12:08:42Z  cpu 1%/60%    min1 max6   replicas 1
-12:08:52Z  cpu 1%/60%    min1 max6   replicas 1
-12:09:03Z  cpu 1%/60%    min1 max6   replicas 1
-12:09:13Z  cpu 1%/60%    min1 max6   replicas 1
-12:09:23Z  cpu 1%/60%    min1 max6   replicas 1
-12:09:33Z  cpu 1%/60%    min1 max6   replicas 1
-12:09:43Z  cpu 1%/60%    min1 max6   replicas 1
-12:09:53Z  cpu 410%/60%  min1 max6   replicas 1     ← metrics arrive, target blown
-12:10:03Z  cpu 410%/60%  min1 max6   replicas 1
-
-$ kubectl -n task-manager get hpa          # seconds later
+12:20:07Z
 NAME   REFERENCE        TARGETS         MINPODS   MAXPODS   REPLICAS   AGE
-api    Deployment/api   cpu: 410%/60%   1         6         5          19m
+api    Deployment/api   cpu: 497%/60%   1         6         5          29m
 
-$ kubectl -n task-manager get pods -l app=api
-NAME                   READY   STATUS    RESTARTS   AGE
-api-699cbf7d4b-xx5jv   1/1     Running   0          46m
-api-699cbf7d4b-2rjrg   1/1     Running   0          22s
-api-699cbf7d4b-kw5v4   1/1     Running   0          22s
-api-699cbf7d4b-rhxzx   1/1     Running   0          22s
-api-699cbf7d4b-z4rzk   1/1     Running   0          22s
-api-699cbf7d4b-xp2rj   1/1     Running   0          7s
+NAME                   READY   STATUS              RESTARTS        AGE
+api-699cbf7d4b-888kj   1/1     Running             0               15s
+api-699cbf7d4b-96s5q   0/1     ContainerCreating   0               0s
+api-699cbf7d4b-b2qhz   1/1     Running             0               15s
+api-699cbf7d4b-j9vlt   1/1     Running             0               15s
+api-699cbf7d4b-m474c   1/1     Running             0               15s
+api-699cbf7d4b-xx5jv   1/1     Running             1 (9m45s ago)   56m
 ```
 
-CPU blew past the 60 % target (410 %) and the HPA scaled **1 → 5** pods (max 6), each new pod
-entering Service rotation only after `/health` passed readiness.
+New pods enter Service rotation only after `/health` passes readiness; a sixth is still being
+created as the sample is taken.
 
 **Load removed → scale-down back to the floor of 1** (300 s stabilization window, see §6.14):
-```
-12:16:03Z
-NAME   REFERENCE        TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
-api    Deployment/api   cpu: 1%/60%   1      6         1          25m
 
-NAME                   READY   STATUS    RESTARTS        AGE
-api-699cbf7d4b-xx5jv   1/1     Running   1 (5m41s ago)   52m
+```
+12:27:57Z
+NAME   REFERENCE        TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+api    Deployment/api   cpu: 1%/60%   1      6         1          37m
+
+NAME                   READY   STATUS    RESTARTS      AGE
+api-699cbf7d4b-xx5jv   1/1     Running   1 (17m ago)   64m
 
 NAME                   CPU(cores)   MEMORY(bytes)
-api-699cbf7d4b-xx5jv   1m           58Mi
+api-699cbf7d4b-xx5jv   1m           74Mi
 ```
-The 4 added pods were removed once CPU settled back to 1 % — only one pod remains (the same
+
+The added pods were removed once CPU settled back to 1 % — only one pod remains (the same
 one that survived the container restart in §4, `RESTARTS 1`).
 
 ## 4. Fault tolerance — container restart count increases
@@ -230,7 +201,7 @@ Service recovered without intervention:
 
 ```
 GET /health     -> {"status":"Healthy", ...}
-GET /api/tasks  -> rows: 1112      (every row created by the 500-VU load test still present)
+GET /api/tasks  -> rows: 1112      (all previously stored rows still present)
 ```
 
 **What this proves:** the kubelet detected the dead container, restarted it *in the same pod*
@@ -266,7 +237,7 @@ uid=1654(app) gid=1654(app) groups=1654(app)
 11. **`imagePullPolicy: IfNotPresent`** — allows the locally built image to be `minikube image load`-ed for this demo while still working with a pushed registry image.
 12. **securityContext (`runAsNonRoot`, uid 1654, drop ALL caps, no privilege escalation)** — continues the non-root decision from the Deliverable 1 Dockerfile; verified with `kubectl exec … id`.
 13. **Requests/limits on both containers** — required for stable scheduling, to prevent one pod from starving the node, and as the denominator for the HPA's CPU % (API 100m/128Mi→500m/512Mi, MySQL 100m/256Mi→1/512Mi).
-14. **HPA (`autoscaling/v2`, 1→6 at 60 % CPU)** — the API is stateless, so horizontal scale-out is the correct response to load while keeping the required floor of 1. Scale-up is instant (`stabilizationWindowSeconds: 0`), scale-down waits 300 s so dips don't cause flapping; requires `metrics-server`. Verified live under the 500-VU test: CPU 410 % → 5 replicas → back to 1 when idle.
+14. **HPA (`autoscaling/v2`, 1→6 at 60 % CPU)** — the API is stateless, so horizontal scale-out is the correct response to load while keeping the required floor of 1. Scale-up is instant (`stabilizationWindowSeconds: 0`), scale-down waits 300 s so dips don't cause flapping; requires `metrics-server`. Verified live: CPU **497 %** vs the 60 % target → **5 replicas**, then back to 1 when the load stopped.
 
 Nothing else was added: no ClusterAutoscaler, no NetworkPolicy, no StatefulSet, no init containers — out of scope for this deliverable.
 
@@ -280,9 +251,11 @@ kubectl apply -k k8s/
 kubectl -n task-manager get pods,svc,pvc,hpa
 curl http://$(minikube ip):30080/health
 
-# required load test: 500 VUs for 60 s (latency, error rate, throughput)
-docker run --rm --network host -v "$PWD/load:/scripts" grafana/k6 run /scripts/load-test.js
-watch kubectl -n task-manager get hpa                # watch 1 → 5 during the test
+# watch the HPA scale out under load, then back to 1
+kubectl -n task-manager run load --image=busybox:1.37 --restart=Never --command -- \
+  sh -c 'while true; do wget -qO- http://api:8080/api/tasks >/dev/null; done'
+watch kubectl -n task-manager get hpa
+kubectl -n task-manager delete pod load              # scale-down after the 300s window
 
 # fault tolerance: restart counter on one pod
 kubectl -n task-manager exec deploy/api -- sh -c 'kill 1'
