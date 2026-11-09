@@ -1,0 +1,25 @@
+# Optional: only useful if an ingress controller (e.g. ingress-nginx) is installed.
+# Without one the object is created but stays without an address — harmless.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api
+  namespace: task-manager
+  labels:
+    app: api
+    app.kubernetes.io/part-of: task-manager
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: task-manager.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 8080
