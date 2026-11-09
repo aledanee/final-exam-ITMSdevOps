@@ -51,7 +51,7 @@ Task: `{ id, title, description, isCompleted, createdAt }`
 ├── tests/
 │   └── functional-test.sh   ← Deliverable 3: functional assertions (14 checks)
 └── load/                    ← Deliverable 3: load testing
-    ├── load-test.js         ← k6 script: 500 VUs × 60 s
+    ├── load-test.js         ← k6 script: 500 VUs × 3 min
     └── REPORT.md            ← latency/error tables over time, root cause, CPU vs memory
 ```
 
@@ -84,7 +84,7 @@ curl http://$(minikube ip):30080/health
 | Autoscaling | HPA `1 → 5` replicas under load (CPU 497 % vs 60 % target), back to 1 when idle |
 | Fault tolerance | `kill 1` in a pod → **RESTARTS 0 → 1**, pod healthy again, data intact (1 112 rows) |
 | Functional validation | `tests/functional-test.sh` → **14/14 passed** (exit 0) |
-| Load test (k6, 500 VU × 60 s) | 26 818 reqs, **439.8 req/s**, p95 **2.02 s**, **48.84 % errors** → root-caused to MySQL `max_connections=151` (see `load/REPORT.md` §5) |
+| Load test (k6, 500 VU × 3 min) | 21 696 reqs, **117.1 req/s**, p95 **11.57 s**, **22.38 % errors** (42 % peak) → root-caused to MySQL `max_connections=151`, restarts 2 → 9 (see `load/REPORT.md` §5) |
 
 ## Reports
 

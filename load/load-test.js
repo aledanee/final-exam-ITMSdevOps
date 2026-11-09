@@ -1,4 +1,4 @@
-// Deliverable 3 — Load test: 500 virtual users × 60 s against the Task Manager API (Kubernetes).
+// Deliverable 3 — Load test: 500 virtual users × 3 minutes against the Task Manager API (Kubernetes).
 // Tool: k6 (Grafana). Mix: 85 % list reads, 10 % single-item reads, 5 % creates, 100 ms think time.
 //
 // Run (from repo root):
@@ -6,7 +6,7 @@
 //     -v "$PWD/load:/scripts" grafana/k6 run \
 //     --out json=/tmp/k6-samples.json /scripts/load-test.js
 //
-// The JSON output contains every sample, which is aggregated per 10 s window in
+// The JSON output contains every sample, which is aggregated per time window in
 // load/REPORT.md (latency percentiles + error rate over time).
 import http from 'k6/http';
 import { check, sleep } from 'k6';
@@ -15,7 +15,7 @@ const BASE = __ENV.BASE_URL || 'http://192.168.49.2:30080'; // Minikube Service 
 
 export const options = {
   vus: 500,
-  duration: '60s',
+  duration: '3m',
   thresholds: {
     // course criterion: error rate must stay below 1 %
     http_req_failed: ['rate<0.01'],

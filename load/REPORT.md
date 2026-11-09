@@ -10,7 +10,7 @@
 | Stack | API `aledanee/task-manager-api:1.0` (Kestrel, 1→6 pods via HPA) + MySQL 8.0 (1 pod, PVC) |
 | Load tool | **k6 (Grafana)** — one of the recommended tools |
 | Functional tool | Bash + `curl` assertions (`tests/functional-test.sh`) |
-| Load profile | **500 virtual users × 60 s**, 85 % `GET /api/tasks`, 10 % `GET /api/tasks/{id}`, 5 % `POST /api/tasks`, 100 ms think time |
+| Load profile | **500 virtual users × 3 minutes**, 85 % `GET /api/tasks`, 10 % `GET /api/tasks/{id}`, 5 % `POST /api/tasks`, 100 ms think time |
 | Scripts (committed) | `load/load-test.js` (k6), `tests/functional-test.sh` (functional assertions) |
 
 Reproduce:
@@ -20,7 +20,7 @@ Reproduce:
 ./tests/functional-test.sh http://192.168.49.2:30080
 ./tests/functional-test.sh http://localhost:8080
 
-# load test with raw samples for the time-window table
+# load test (500 VUs for 3 minutes) with raw samples for the time-window table
 docker run --rm --network host -v "$PWD/load:/scripts" -v /tmp:/out \
   grafana/k6 run --out json=/out/k6-samples.json /scripts/load-test.js
 ```
@@ -57,126 +57,159 @@ PASS  GET deleted task -> 404                              -> 404
 
 The API behaves exactly as specified **at zero load**.
 
-## 3. Load test results (k6, 500 VU × 60 s)
+## 3. Load test results (k6, 500 VU × 3 minutes)
 
 ```
-http_req_duration..............: avg=1.02s  min=68.52ms  med=939.49ms  max=7.3s   p(90)=1.53s  p(95)=2.02s
-http_req_failed................: 48.84%  13100 out of 26818
-http_reqs......................: 26818  439.85/s
+http_req_duration..............: avg=3.8s  min=0s  med=2.73s  max=41.32s  p(90)=7.11s  p(95)=11.57s
+http_req_failed................: 22.38%  4857 out of 21696
+http_reqs......................: 21696  117.12/s
 threshold http_req_failed rate<0.01 → ✗ (crossed — see root cause in §5)
 ```
 
 | Metric | Value |
 |---|---|
-| Total requests | **26 818** in 60 s |
-| Throughput | **439.8 req/s** |
-| Latency avg / median | 1.02 s / 939 ms |
-| Latency p90 / p95 / max | 1.53 s / **2.02 s** / 7.30 s |
-| Error rate | **48.84 %** (13 100 × HTTP 500) |
+| Duration | **3 minutes** (180 s + drain) |
+| Total requests | **21 696** |
+| Throughput | **117.1 req/s** |
+| Latency avg / median | 3.80 s / 2.73 s |
+| Latency p90 / p95 / max | 7.11 s / **11.57 s** / 41.32 s |
+| Error rate | **22.38 %** (4 857 failed) |
 
-## 4. Latency percentiles and error rate over time (per 10 s window)
+Failure composition: **4 446 × HTTP 500**, **384 × network errors (status 0, client gave up)**
+and 27 × expected 404s (counted by k6 as non-2xx).
+
+Response codes across the whole run:
+
+| 200 | 201 | 404 (expected) | 500 | 0 (timeout) |
+|---|---|---|---|---|
+| 16 005 | 834 | 27 | 4 446 | 384 |
+
+## 4. Latency percentiles and error rate over time (per 30 s window)
 
 | Window (s) | Requests | Req/s | Avg | p50 | p90 | p95 | Max | Errors | Error % |
 |---|---|---|---|---|---|---|---|---|---|
-| 0–10 | 3 634 | 363 | 1 153 ms | 1 059 ms | 1 815 ms | 2 108 ms | 5 866 ms | 2 025 | 55.72 % |
-| 10–20 | 4 473 | 447 | 1 015 ms | 920 ms | 1 537 ms | 1 992 ms | 6 259 ms | 2 142 | 47.89 % |
-| 20–30 | 4 510 | 451 | 1 008 ms | 934 ms | 1 515 ms | 2 026 ms | 5 696 ms | 2 112 | 46.83 % |
-| 30–40 | 4 414 | 441 | 1 030 ms | 942 ms | 1 667 ms | 2 175 ms | 5 764 ms | 2 065 | 46.78 % |
-| 40–50 | 4 318 | 432 | 1 050 ms | 925 ms | 1 638 ms | 2 264 ms | 7 300 ms | 2 148 | 49.75 % |
-| 50–60 | 4 886 | 489 | 947 ms | 898 ms | 1 229 ms | 1 522 ms | 5 897 ms | 2 310 | 47.28 % |
-| 60–70 (drain) | 583 | 58 | 930 ms | 885 ms | 1 234 ms | 1 307 ms | 2 178 ms | 298 | 51.11 % |
+| 0–30 | 2 593 | 86 | 5.09 s | 4.999 s | 6.69 s | 7.11 s | 15.7 s | 2 | 0.08 % |
+| 30–60 | 1 162 | 39 | 7.13 s | 6.18 s | 11.70 s | 13.39 s | 20.5 s | 35 | 3.01 % |
+| 60–90 | 1 049 | 35 | 13.99 s | 11.82 s | 20.82 s | 21.54 s | 33.0 s | 5 | 0.48 % |
+| 90–120 | 5 691 | 190 | 2.81 s | 2.09 s | 3.97 s | 8.25 s | 41.3 s | 2 395 | 42.08 % |
+| 120–150 | 5 361 | 179 | 2.64 s | 2.51 s | 4.25 s | 4.88 s | 11.8 s | 1 471 | 27.44 % |
+| 150–180 | 5 340 | 178 | 2.57 s | 2.32 s | 4.42 s | 5.20 s | 11.4 s | 859 | 16.09 % |
+| 180–210 (drain) | 500 | 17 | 5.08 s | 4.91 s | 8.30 s | 8.72 s | 17.8 s | 90 | 18.00 % |
 
-Error distribution by operation:
+Error distribution by operation (whole run):
 
-| Operation | 200/201 | 404 (expected) | 500 (failures) |
-|---|---|---|---|
-| `list` | 11 690 | — | 11 116 |
-| `get` | 1 343 | 20 | 1 274 |
-| `create` | 685 | — | 690 |
+| Operation | Success | 404 (expected) | HTTP 500 | Timeout (0) |
+|---|---|---|---|---|
+| `list` | 14 372 | — | 3 764 | 297 |
+| `get` | 1 633 | 27 | 471 | 22 |
+| `create` | 834 | — | 211 | 65 |
 
-**Reading of the table:** latency was *stable* across the whole test (p95 ≈ 1.5–2.3 s, no
-ramp-up) while the error rate sat flat at ~47 % from the first window. A steadily high error
-rate with flat latency is the signature of a **hard capacity limit being hit immediately**
-(some requests fail fast, the accepted ones queue normally) — not of a gradually saturating
-resource. That is exactly what §5 proves.
+**Reading of the table — three distinct phases:**
 
-## 5. Root cause of the errors — MySQL connection exhaustion
+1. **Seconds 0–90 — saturation:** almost no errors (0.08 % → 3 %) but latency explodes
+   (median 5 s → 11.8 s, p95 21.5 s) and throughput collapses (86 → 35 req/s). Requests
+   queue for scarce database connections; the connection pool is being exhausted.
+2. **Seconds 90–120 — the breaking point:** pods begin crash-looping (see §5), queues are
+   flushed so latency *drops* to ~2.8 s and throughput jumps back to 190 req/s — but now
+   nearly half of requests fail fast with 500: **error rate spikes to 42 %**.
+3. **Seconds 120–210 — partial recovery:** error rate falls (27 % → 16 %) as pools recycle
+   and pods stabilise, but it never reaches the 1 % target while connections remain scarce.
 
-Every failure was `HTTP 500` on all three operations, and immediately after the test MySQL
-reported it was **at/over its connection ceiling**:
+This pattern — latency ramp first, then an error spike exactly when containers restart — is
+the signature of a hard capacity limit (database connections), not of a gradually saturating
+CPU or memory resource.
+
+## 5. Root cause — MySQL connection exhaustion
+
+Evidence collected during/after the run:
 
 ```
 $ kubectl exec deploy/mysql -- mysql -utaskuser -ptaskpass taskdb -e "SELECT 1;"
 ERROR 1040 (08004): Too many connections
 
 max_connections        151
-Threads_connected      152
-Max_used_connections   152
+Max_used_connections   152      ← ceiling hit again during this run
+Threads_connected      100      (draining after the load stopped)
 ```
 
-Chain of events:
+Chain of events (same failure mode as the 60 s pilot run, now observed over 3 minutes):
 
-1. 6 API pods × EF/MySqlConnector connection pool (default up to 100 per pod) ⇒ far more
-   connection demand than MySQL's `max_connections = 151`.
-2. Any request needing a **new** pooled connection gets `Too many connections` → unhandled by
-   EF → the app's error middleware returns **500** (≈ 13 000 requests).
-3. Newly scheduled pods could not reach the database **at boot**, burned through the startup
-   retries and exited, so kubelet restarted them — the container restart counter climbed:
-   `RESTARTS 0 → 1 → 2 → 3` on three pods (events: `Liveness probe failed … will be restarted`,
-   `Readiness probe failed … connection refused`):
+1. 6 API pods × EF/MySqlConnector pools (up to 100 per pod) ⇒ demand far beyond
+   `max_connections = 151`.
+2. Requests needing a **new** connection get `Too many connections` → EF throws → the app's
+   error middleware returns **500** (4 446 requests), or the client gives up first (384 timeouts).
+3. Pods that could not reach the database at boot burned through the startup retries
+   (`Database not ready (attempt 8/12) …`) and exited; kubelet restarted them.
 
-```
-warn: Program[0] Database not ready (attempt 8/12): An exception has been raised that is
-      likely due to a transient failure. … Retrying in 5s...
-fail: Microsoft.EntityFrameworkCore.Database.Connection[20004]
-      An error occurred using the connection to database '' on server 'mysql'.
-```
-
-**Recovery** (load stopped, pools recycled — no manual intervention):
+**Container restart count rising during the test** (sum of `RESTARTS` over all API pods,
+sampled every 5 s):
 
 ```
-Threads_connected 152 → 55
+14:12:25Z restarts_sum=2        ← test starts
+14:13:02Z restarts_sum=3
+14:14:04Z restarts_sum=4
+14:14:46Z restarts_sum=6        ← error spike window (§4 phase 2)
+14:15:02Z restarts_sum=7
+14:15:17Z restarts_sum=8
+14:15:33Z restarts_sum=9        ← test ends
+```
+
+Final state — every pod recovered **without manual intervention**:
+
+```
+14:16:13Z
+NAME                   READY   STATUS    RESTARTS      AGE
+api-699cbf7d4b-c66r9   1/1     Running   1 (88s ago)   2m31s
+api-699cbf7d4b-kcvz8   1/1     Running   1 (58s ago)   2m31s
+api-699cbf7d4b-l7wvf   1/1     Running   1 (42s ago)   2m16s
+api-699cbf7d4b-m55kz   1/1     Running   0             2m31s
+api-699cbf7d4b-p4nbs   1/1     Running   1 (89s ago)   2m31s
+api-699cbf7d4b-xx5jv   1/1     Running   5 (75s ago)   172m
+hpa: cpu 17%/60%  replicas 6 (max)
 GET /api/tasks -> 200
-api pods: 6 × 1/1 Running (RESTARTS 3/3/2 — counters keep their history)
 ```
+
+Data intact: **3 077 tasks** in MySQL (rows written under load all survived).
 
 ## 6. CPU-bound or memory-bound?
 
-Samples taken every 5 s during the test (`kubectl top`), against a node with **5 CPU / ~7.5 Gi**
-and container limits from `k8s/*.yaml` (API 500m / 512Mi, MySQL 1 000m / 512Mi):
+Samples every 5 s during the 3-minute run (`kubectl top`), node capacity **5 CPU / 7 404 Mi**,
+container limits from `k8s/*.yaml` (API 500m / 512Mi, MySQL 1 000m / 512Mi):
 
-| Layer | CPU observed | CPU ceiling | Memory observed | Memory ceiling |
+| Layer | CPU observed (peak) | CPU ceiling | Memory observed (peak) | Memory ceiling |
 |---|---|---|---|---|
-| Node (peak) | 1 258 m = **25 %** | 5 000 m | 1 727 Mi = **23 %** | 7 404 Mi |
-| API pods (peak sampled) | 269–336 m = **54–67 % of the 500m limit** | 500 m | 94–119 Mi = **18–23 % of the 512Mi limit** | 512 Mi |
-| MySQL | 94 m = 9 % | 1 000 m | 445 Mi vs **442 Mi at idle** (flat) | 512 Mi |
+| Node | 1 828 m = **36 %** | 5 000 m | 1 839 Mi = **24 %** | 7 404 Mi |
+| API pods | up to **489 m ≈ 98 % of the 500 m limit** (others 13–359 m) | 500 m | 145 Mi = **28 % of the 512 Mi limit** | 512 Mi |
+| MySQL | 133 m = 13 % | 1 000 m | 477 Mi = **93 % of its 512 Mi limit** (442 Mi at idle) | 512 Mi |
 
-**Verdict: the system was neither memory-bound nor classically CPU-bound — it was
-*connection-bound* (a software/service limit).**
+**Verdict: the system was *connection-bound* — neither classically CPU-bound nor
+memory-bound.**
 
-* **Not memory-bound:** memory sat at ~18–23 % of every ceiling and MySQL's footprint was
-  flat (445 Mi under load vs 442 Mi idle) — no growth, no pressure, no OOM kills
-  (`RESTARTS` were probe/startup related, not OOM).
-* **Not CPU-bound at the node level:** peak node CPU was 25 % of 5 cores; nothing queued for
-  CPU scheduling at the infrastructure layer.
-* **If forced to pick one of the two:** the resource *closest* to its ceiling was **CPU** —
-  API pods ran at 54–67 % of their 500 m limit while memory never exceeded 23 % of its limit,
-  i.e. CPU had roughly 3× less headroom than memory. So the deployment leans CPU-bound of the
-  two, but CPU was not what failed.
-* **What actually failed** was `max_connections = 151`, a configuration ceiling hit
-  immediately (§5) — which is why the error rate is flat from window 1 rather than climbing.
+* **Not memory-bound:** node memory never exceeded 24 %, API pods stayed at ≤ 28 % of their
+  limit, and although MySQL sat highest of all (93 % of its limit) it never crossed it —
+  **zero OOM kills** occurred (`RESTARTS` were startup/liveness events, not OOM).
+* **Not CPU-bound at the infrastructure level:** node CPU peaked at 36 % of 5 cores, so the
+  cluster as a whole had CPU headroom throughout.
+* **If forced to choose one of the two:** **CPU** was the more constrained resource —
+  individual API pods briefly hit **98 % of their 500 m CPU limit** (inviting throttling),
+  while memory everywhere retained ≥ 72 % headroom. So the deployment leans CPU-bound of the
+  two, but CPU is not what produced the failures.
+* **What actually failed** was `max_connections = 151` (`Max_used_connections 152`): a
+  configuration ceiling hit instantly, which is why errors concentrate at the moment pods
+  could no longer obtain connections rather than growing smoothly with resource usage.
 
 ## 7. Conclusions and recommendations
 
 | # | Finding | Recommendation |
 |---|---|---|
-| 1 | 48.8 % errors, all HTTP 500, flat from the first window | Raise MySQL `max_connections` (e.g. 500) **and** cap each pod's pool (`Maximum Pool Size` in the connection string, e.g. 25 ⇒ 6 × 25 = 150 < ceiling) |
-| 2 | New pods crash at boot while the DB is saturated (restarts 0→3) | Add `EnableRetryOnFailure()` to `UseMySql` (EF itself suggests it in the logs) and a `startupProbe` so liveness never kills a booting pod |
-| 3 | Latency stable (p95 ≈ 2 s) while errors stay flat | Queueing behaviour is healthy; once (1) is fixed the same profile should show falling error rates — rerun this script to confirm |
-| 4 | Throughput 439 req/s at 500 VU | HPA reacted (1→6 pods) but 2 pods stayed unready due to (2); fixing both raises usable capacity |
+| 1 | 22.38 % errors overall (42 % peak), all server-side: 500s + timeouts | Raise MySQL `max_connections` (e.g. 500) **and** cap each pod's pool (`Maximum Pool Size`, e.g. 25 ⇒ 6 × 25 = 150 < ceiling) |
+| 2 | Restart count climbed 2 → 9 during the run; new pods died at boot | Add `EnableRetryOnFailure()` to `UseMySql` (EF suggests it in the logs) and a `startupProbe` so liveness never kills a booting pod |
+| 3 | Latency ramped to 21 s p95 *before* errors spiked | Pool starvation shows up as queueing first — the table in §4 gives an early warning ~90 s before containers started failing |
+| 4 | Throughput fell 440 → 117 req/s as restarts accumulated | Fixes (1)+(2) keep all 6 HPA pods ready, restoring throughput at the same load |
 | 5 | Functional behaviour perfect at zero load | 14/14 assertions remain the regression gate — run `tests/functional-test.sh` after every change |
+| 6 | System recovered fully by itself (pods 1/1, API 200, data intact) | Liveness/readiness/self-healing work as designed — reliability of the *orchestration* is proven even though the *database config* is not |
 
-**Overall:** correctness ✅ (14/14 functional checks), load handling ⚠ — throughput and
-latency are acceptable for the profile, but the deployment fails its 1 % error-rate
-requirement until the database connection ceiling is addressed. The report does not adjust
-the numbers: 48.84 % is what the system measured.
+**Overall:** correctness ✅ (14/14 functional checks) and self-healing ✅ (restarts 2 → 9, all
+pods back to `1/1`, no data loss across 3 077 rows). Load handling ⚠ — during a sustained
+3-minute 500-VU test the deployment cannot hold the 1 % error target until the database
+connection ceiling is raised. The numbers above are reported exactly as measured.
