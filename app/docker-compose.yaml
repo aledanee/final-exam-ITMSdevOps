@@ -1,0 +1,43 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: taskmanager-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - taskmanager-network
+
+  api:
+    build: ./backend
+    container_name: taskmanager-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: "Server=db;Port=3306;Database=taskdb;User=taskuser;Password=taskpass;AllowPublicKeyRetrieval=True;SslMode=None;"
+    ports:
+      - "8080:8080"
+    networks:
+      - taskmanager-network
+
+volumes:
+  mysql_data:
+    name: taskmanager-mysql-data
+
+networks:
+  taskmanager-network:
+    name: taskmanager-network
+    driver: bridge
