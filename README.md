@@ -73,6 +73,43 @@ kubectl -n task-manager get pods,svc,hpa
 curl http://$(minikube ip):30080/health
 ```
 
+## Load test — run it yourself
+
+Two commands show what happens under load: one **generates** the traffic, the other **shows
+what the cluster does** about it (CPU rising, HPA scaling 1 → 6, RESTARTS climbing).
+
+**1. Start the test** (500 virtual users for 3 minutes, k6):
+
+```bash
+docker run --rm --network host -v "$PWD/load:/scripts" grafana/k6 run /scripts/load-test.js
+```
+
+**2. Watch it live in a second terminal** (refreshes every 2 s — screenshot this):
+
+```bash
+watch -n 2 'date -u +"%H:%M:%S UTC"
+  kubectl top nodes
+  kubectl top pods -n task-manager
+  kubectl -n task-manager get pods
+  kubectl -n task-manager get hpa'
+```
+
+What you will see while it runs:
+
+* `kubectl top pods` — API pod CPU climbing toward its 500m limit
+* `kubectl get pods` — the **RESTARTS** column increasing as pods crash-loop (database out of connections)
+* `kubectl get hpa` — replicas going **1 → 6** (CPU over the 60 % target), then back to 1 after the test
+* k6 ending with `█ THRESHOLDS` and `█ TOTAL RESULTS` — latency percentiles and error rate
+
+When it finishes, view the summary again with:
+
+```bash
+# functional validation first (14 checks, should all PASS)
+./tests/functional-test.sh http://192.168.49.2:30080
+```
+
+Full analysis (per-window latency/error tables, root cause, CPU vs memory verdict): **`load/REPORT.md`**.
+
 ## Key results (evidence in the reports)
 
 | Check | Result |
