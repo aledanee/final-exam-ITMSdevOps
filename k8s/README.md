@@ -11,9 +11,9 @@ Manifests that run the Deliverable 1 Task Manager API (`app/backend`) and MySQL 
 | `pvc.yaml` | PersistentVolumeClaim | `mysql-data` (1Gi, RWO) so data survives pod restarts |
 | `mysql-deployment.yaml` | Deployment | MySQL 8, `Recreate` strategy, probes, limits, PVC mount |
 | `mysql-service.yaml` | Service | `ClusterIP` — internal only, reachable as `mysql:3306` |
-| `api-deployment.yaml` | Deployment | 2 replicas of the API, HTTP probes on `/health`, non-root |
+| `api-deployment.yaml` | Deployment | 1 replica of the API (**`spec.replicas: 1`**), HTTP probes on `/health`, non-root |
 | `api-service.yaml` | Service | `NodePort 30080` → API on port 8080 |
-| `hpa.yaml` | HorizontalPodAutoscaler | scales the API 2 → 6 pods on 60% CPU |
+| `hpa.yaml` | HorizontalPodAutoscaler | scales the API 1 → 6 pods on 60% CPU (floor = 1) |
 | `ingress.yaml` | Ingress | Optional host-based route (`task-manager.local`), needs ingress-nginx |
 | `kustomization.yaml` | Kustomization | `kubectl apply -k k8s/` applies everything in order |
 
@@ -85,10 +85,10 @@ every choice: see **[REPORT.md](REPORT.md)**.
   `ConnectionStrings__DefaultConnection` (from the Secret, note the `__` nesting separator).
 * **Secrets are plaintext** `stringData` — acceptable for an exam; use Sealed/External Secrets
   or your platform's secret store in production.
-* **Scaling:** API is stateless → 2 baseline replicas, autoscaled to a max of 6 by the HPA
-  (see `hpa.yaml`). MySQL stays at 1 replica (single RWO volume, `Recreate` strategy);
-  HA/StatefulSet is out of scope. The HPA requires `metrics-server`
-  (`minikube addons enable metrics-server`).
+* **Scaling:** API is stateless → starts at `spec.replicas: 1` (assignment requirement), with
+  an HPA floor of 1 and a max of 6 (see `hpa.yaml`). MySQL stays at 1 replica
+  (single RWO volume, `Recreate` strategy); HA/StatefulSet is out of scope. The HPA requires
+  `metrics-server` (`minikube addons enable metrics-server`).
 * **Security context:** the API pod runs as the image's non-root `app` user (uid 1654),
   all capabilities dropped, no privilege escalation — consistent with the Deliverable 1 Dockerfile.
 * **Ingress** requires an ingress-nginx controller; without one the resource is inert.

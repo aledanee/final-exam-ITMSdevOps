@@ -1,4 +1,6 @@
 # Autoscales the stateless API on CPU utilization.
+# The Deployment starts at spec.replicas: 1 (assignment requirement) and the HPA floor is
+# also 1; under load it grows to a maximum of 6.
 # Requires metrics-server (minikube: `minikube addons enable metrics-server`).
 # CPU % is measured against the container's cpu request (100m), so 60% = 60m.
 apiVersion: autoscaling/v2
@@ -14,7 +16,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: api
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 6
   metrics:
     - type: Resource

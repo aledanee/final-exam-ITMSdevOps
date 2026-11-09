@@ -1,30 +1,35 @@
-# Report — Task Manager API (.NET Port)
+# Report — Task Manager API
 
 ## 1. Overview
 
-A Task Manager REST API originally written in Node.js, re-implemented in **C# / ASP.NET Core 8**
-using **minimal APIs**, persisting to **MySQL 8** via Entity Framework Core (Pomelo provider).
+A **Task Manager REST API** built with **C# / ASP.NET Core 8** (minimal APIs), persisting to
+**MySQL 8** via Entity Framework Core (Pomelo provider).
+
+The assignment asked for the same CRUD endpoints as the Node.js app written earlier in the
+course, and the professor confirmed that a **basic implementation is acceptable** — so this is
+a Task Manager written to meet that instruction and its endpoint list. It is not a line-by-line
+port of the original app (that source was not part of this repository).
 
 All application code lives in a **single file**: `app/backend/Program.cs`
 (the model, DbContext, DTOs and every endpoint are in that one file, as required).
 
-## 2. CRUD endpoint parity with the original Node.js app
+## 2. Endpoints (as specified by the assignment)
 
-| Node.js (original) | C# implementation (this project) | Result codes |
+| Required endpoint | C# implementation (this project) | Result codes |
 |---|---|---|
 | `POST /api/tasks` | `app.MapPost("/api/tasks", ...)` | 201 + body / 400 |
 | `GET /api/tasks` | `app.MapGet("/api/tasks", ...)` | 200 + array |
-| `GET /api/tasks/:id` | `app.MapGet("/api/tasks/{id}", ...)` | 200 / 404 |
-| `PUT /api/tasks/:id` | `app.MapPut("/api/tasks/{id}", ...)` | 200 / 400 / 404 |
-| `DELETE /api/tasks/:id` | `app.MapDelete("/api/tasks/{id}", ...)` | 204 / 404 |
+| `GET /api/tasks/{id}` | `app.MapGet("/api/tasks/{id}", ...)` | 200 / 404 |
+| `PUT /api/tasks/{id}` | `app.MapPut("/api/tasks/{id}", ...)` | 200 / 400 / 404 |
+| `DELETE /api/tasks/{id}` | `app.MapDelete("/api/tasks/{id}", ...)` | 204 / 404 |
 | `GET /health` | `app.MapGet("/health", ...)` | 200 `{"status":"Healthy"}` |
 
 Task payload shape: `{ id, title, description, isCompleted }` (+ `createdAt`, an added
-convenience field that does not alter the original contract).
+convenience field that does not alter the specified contract).
 
-**Assumption:** the original Node.js app was not present in this repository, so parity is
-defined against the course specification given in the brief (the endpoints listed above).
-Error responses use JSON `{ "error": "..." }`, a common convention in the original Express app.
+**Stated assumption:** the API was written directly against the endpoint list above (the
+professor's "basic app is fine" guidance); it was not derived from the original Node.js
+source. Error responses use JSON `{ "error": "..." }`.
 
 ## 3. Dockerfile
 
@@ -58,6 +63,10 @@ ENTRYPOINT ["dotnet", "TaskManager.dll"]
   (empty data volume): creates `taskdb`, the `taskuser` account and the `Tasks` table.
 * Startup ordering: `api` waits for the `db` **healthcheck** (`mysqladmin ping`) via
   `depends_on: condition: service_healthy`, plus the app itself retries connecting at boot.
+* **API healthcheck** requests `GET /health` and requires `{"status":"Healthy"}` in the body
+  (`interval: 10s`, `retries: 5`, `start_period: 20s`). The image ships no `curl`/`wget`, so
+  the check uses bash's `/dev/tcp` to send the HTTP request — `docker compose ps` then reports
+  the `api` service as `healthy`, not just `Up`.
 
 ## 5. Assumptions
 

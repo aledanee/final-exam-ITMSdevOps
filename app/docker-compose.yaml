@@ -30,6 +30,13 @@ services:
       ConnectionStrings__DefaultConnection: "Server=db;Port=3306;Database=taskdb;User=taskuser;Password=taskpass;AllowPublicKeyRetrieval=True;SslMode=None;"
     ports:
       - "8080:8080"
+    # the image ships no curl/wget, so the check uses bash's /dev/tcp
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"status\":\"Healthy\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - taskmanager-network
 
