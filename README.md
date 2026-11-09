@@ -40,6 +40,11 @@ Task: `{ id, title, description, isCompleted, createdAt }`
 │   ├── kustomization.yaml     (kubectl apply -k k8s/)
 │   ├── README.md           ← how to deploy + assumptions
 │   └── REPORT.md           ← k8s evidence: pods/services, HPA, restarts
+├── tests/
+│   └── functional-test.sh  ← Deliverable 3: functional assertions (14 checks)
+└── load/                   ← Deliverable 3: load testing
+    ├── load-test.js        ← k6 script: 500 VUs × 60 s
+    └── REPORT.md           ← latency/error tables over time, root cause, CPU vs memory
 ```
 
 ## Quick start
@@ -70,9 +75,12 @@ curl http://$(minikube ip):30080/health
 | Non-root | Dockerfile `USER $APP_UID` and pod `securityContext` → `uid=1654(app)` |
 | Autoscaling | HPA `1 → 5` replicas under load (CPU 497 % vs 60 % target), back to 1 when idle |
 | Fault tolerance | `kill 1` in a pod → **RESTARTS 0 → 1**, pod healthy again, data intact (1 112 rows) |
+| Functional validation | `tests/functional-test.sh` → **14/14 passed** (exit 0) |
+| Load test (k6, 500 VU × 60 s) | 26 818 reqs, **439.8 req/s**, p95 **2.02 s**, **48.84 % errors** → root-caused to MySQL `max_connections=151` (see `load/REPORT.md` §5) |
 
 ## Reports
 
 * `REPORT.md` — Deliverable 1 (Dockerfile, compose, ports/versions/DB/env assumptions)
 * `k8s/REPORT.md` — Deliverable 2 (kubectl evidence, probes, HPA, restart count)
 * `k8s/README.md` — deployment steps + assumptions
+* `load/REPORT.md` — Deliverable 3 (functional validation, latency/error tables over time, root-cause and CPU/memory analysis)
