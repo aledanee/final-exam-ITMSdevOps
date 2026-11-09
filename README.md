@@ -40,6 +40,11 @@ Task: `{ id, title, description, isCompleted, createdAt }`
 │   ├── kustomization.yaml     (kubectl apply -k k8s/)
 │   ├── README.md           ← how to deploy + assumptions
 │   └── REPORT.md           ← k8s evidence: pods/services, HPA, restarts
+├── tests/
+│   └── functional-test.sh  ← Deliverable 3: functional assertions (14 checks)
+└── load/                   ← Deliverable 3: load testing
+    ├── load-test.js        ← k6 script: 500 VUs × 60 s
+    └── REPORT.md           ← latency/error tables over time, root cause, CPU vs memory
 ```
 
 ## Quick start
