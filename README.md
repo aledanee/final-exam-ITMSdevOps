@@ -21,30 +21,38 @@ Task: `{ id, title, description, isCompleted, createdAt }`
 ## Repository layout
 
 ```
-├── README.md               ← this file (root overview)
-├── REPORT.md               ← Deliverable 1 report (Docker/compose + assumptions)
-├── app/                    ← Deliverable 1: containerized application
-│   ├── backend/            ← ASP.NET Core app — ALL code in a single file (Program.cs)
-│   │   ├── Program.cs      ← endpoints, model, DbContext, DTOs
-│   │   ├── TaskManager.csproj
-│   │   ├── appsettings.json
-│   │   └── Dockerfile      ← multi-stage: sdk:8.0 → aspnet:8.0-bookworm-slim, non-root, Kestrel
-│   ├── db/init.sql         ← MySQL first-boot schema
-│   ├── docker-compose.yaml ← named network + named volume, db & api healthchecks
-│   └── README.md
-├── k8s/                    ← Deliverable 2: Kubernetes manifests
-│   ├── namespace.yaml  secret.yaml  pvc.yaml
-│   ├── mysql-deployment.yaml  mysql-service.yaml
-│   ├── api-deployment.yaml    api-service.yaml
-│   ├── hpa.yaml               ingress.yaml
-│   ├── kustomization.yaml     (kubectl apply -k k8s/)
-│   ├── README.md           ← how to deploy + assumptions
-│   └── REPORT.md           ← k8s evidence: pods/services, HPA, restarts
+├── .gitignore
+├── README.md                ← this file (root overview)
+├── REPORT.md                ← Deliverable 1 report (Docker/compose + assumptions)
+├── app/                     ← Deliverable 1: containerized application
+│   ├── README.md
+│   ├── docker-compose.yaml  ← named network + named volume, db & api healthchecks
+│   ├── db/
+│   │   └── init.sql         ← MySQL first-boot schema
+│   └── backend/             ← ASP.NET Core app — ALL code in a single file (Program.cs)
+│       ├── Program.cs       ← endpoints, model, DbContext, DTOs
+│       ├── TaskManager.csproj
+│       ├── appsettings.json
+│       ├── Dockerfile       ← multi-stage: sdk:8.0 → aspnet:8.0-bookworm-slim, non-root, Kestrel
+│       └── .dockerignore
+├── k8s/                     ← Deliverable 2: Kubernetes manifests (12 files, one per line)
+│   ├── namespace.yaml       ← namespace: task-manager
+│   ├── secret.yaml          ← DB credentials + API connection string
+│   ├── pvc.yaml             ← mysql-data, 1Gi, ReadWriteOnce
+│   ├── mysql-deployment.yaml← apps/v1, 1 replica, Recreate, exec probes
+│   ├── mysql-service.yaml   ← ClusterIP:3306 (internal only)
+│   ├── api-deployment.yaml  ← apps/v1, spec.replicas: 1, /health probes, non-root
+│   ├── api-service.yaml     ← NodePort 30080 → 8080
+│   ├── hpa.yaml             ← autoscaling/v2: 1→6 pods at 60 % CPU
+│   ├── ingress.yaml         ← optional host routing (needs ingress-nginx)
+│   ├── kustomization.yaml   ← kubectl apply -k k8s/
+│   ├── README.md            ← how to deploy + assumptions
+│   └── REPORT.md            ← k8s evidence: pods/services, HPA, restarts
 ├── tests/
-│   └── functional-test.sh  ← Deliverable 3: functional assertions (14 checks)
-└── load/                   ← Deliverable 3: load testing
-    ├── load-test.js        ← k6 script: 500 VUs × 60 s
-    └── REPORT.md           ← latency/error tables over time, root cause, CPU vs memory
+│   └── functional-test.sh   ← Deliverable 3: functional assertions (14 checks)
+└── load/                    ← Deliverable 3: load testing
+    ├── load-test.js         ← k6 script: 500 VUs × 60 s
+    └── REPORT.md            ← latency/error tables over time, root cause, CPU vs memory
 ```
 
 ## Quick start
