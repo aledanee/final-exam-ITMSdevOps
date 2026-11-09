@@ -9,6 +9,7 @@ resources:
   - mysql-service.yaml
   - api-deployment.yaml
   - api-service.yaml
+  - hpa.yaml
   - ingress.yaml
 labels:
   - pairs:

@@ -17,6 +17,7 @@ kubectl apply -k k8s/
 | `mysql` | v1 / Service | ClusterIP:3306 (internal only) |
 | `api` | **apps/v1 / Deployment** | 2 replicas, **HTTP probes on `/health`** |
 | `api` | v1 / Service | NodePort 30080 → 8080 |
+| `api` | **autoscaling/v2 / HorizontalPodAutoscaler** | 2→6 replicas at 60% CPU |
 | `api` | networking.k8s.io/v1 / Ingress | optional, needs ingress-nginx |
 
 Both Deployments use `apiVersion: apps/v1` + `kind: Deployment`, as required.
@@ -101,6 +102,50 @@ DELETE /api/tasks/1   -> 204
 GET  /api/tasks/1     -> 404   (after delete)
 ```
 
+### Horizontal autoscaling under load (`kubectl get hpa`)
+
+Enabled with `minikube addons enable metrics-server`, then a `wget` loop was pointed at the
+Service (`kubectl run load --image=busybox ... while true; do wget http://api:8080/api/tasks; done`):
+
+**Before load — steady at the floor:**
+```
+NAME   REFERENCE        TARGETS       MINPODS   MAXPODS   REPLICAS   AGE
+api    Deployment/api   cpu: 1%/60%   2         6         2          30s
+```
+
+**Under load — CPU blows past the 60% target, HPA adds pods (2 → 6):**
+```
+NAME   REFERENCE        TARGETS         MINPODS   MAXPODS   REPLICAS   AGE
+api    Deployment/api   cpu: 333%/60%   2         6         6          2m3s
+
+NAME                   READY   STATUS    RESTARTS   AGE
+api-699cbf7d4b-kx6wx   1/1     Running   0          29m
+api-699cbf7d4b-q7glg   1/1     Running   0          7s
+api-699cbf7d4b-vgd2q   1/1     Running   0          7s
+api-699cbf7d4b-vw5zx   1/1     Running   0          7s
+api-699cbf7d4b-wdtmh   1/1     Running   0          7s
+api-699cbf7d4b-xx5jv   1/1     Running   0          29m
+```
+Rollout finished with `6 of 6 updated replicas are available`, load then spread across the
+pods (`kubectl top pods`: 325m / 341m per pod, well under the 500m limit).
+
+**Load removed → scale-down back to the floor** (300s stabilization window, see §3.14):
+```
+11:59:52Z
+NAME   REFERENCE        TARGETS       MINPODS   MAXPODS   REPLICAS   AGE
+api    Deployment/api   cpu: 1%/60%   2         6         2          9m1s
+
+NAME                   READY   STATUS    RESTARTS   AGE
+api-699cbf7d4b-kx6wx   1/1     Running   0          36m
+api-699cbf7d4b-xx5jv   1/1     Running   0          36m
+
+NAME                   CPU(cores)   MEMORY(bytes)
+api-699cbf7d4b-kx6wx   1m           81Mi
+api-699cbf7d4b-xx5jv   1m           90Mi
+```
+The 4 added pods were removed once CPU settled back to 1%/60% — only the original 2 remain,
+still at `RESTARTS 0`.
+
 ### Non-root runtime (same user as the Dockerfile)
 
 ```
@@ -128,15 +173,23 @@ uid=1654(app) gid=1654(app) groups=1654(app)
 11. **`imagePullPolicy: IfNotPresent`** — allows the locally built image to be `minikube image load`-ed for this demo while still working with a pushed registry image.
 12. **securityContext (`runAsNonRoot`, uid 1654, drop ALL caps, no privilege escalation)** — continues the non-root decision from the Deliverable 1 Dockerfile; verified with `kubectl exec … id`.
 13. **Requests/limits on both containers** — required for stable scheduling and to prevent one pod from starving the node; sized for the workload (API 100m/128Mi→500m/512Mi, MySQL 100m/256Mi→1/512Mi).
+14. **HPA (`autoscaling/v2`, 2→6 at 60% CPU)** — the API is stateless, so horizontal scale-out is the correct response to load; scale-up is instant (`stabilizationWindowSeconds: 0`) while scale-down waits 300s so traffic dips don't cause flapping. CPU % is measured against the container's `cpu: 100m` request — which is also why `requests` must be set. Requires `metrics-server`. Verified live: `cpu: 333%/60%` → 6 replicas, then back to 2 after the load stopped.
 
-Nothing else was added: no HPA, no NetworkPolicy, no StatefulSet, no init containers — out of scope for this deliverable.
+Nothing else was added: no ClusterAutoscaler, no ClusterIP-exposing Ingress controller install, no NetworkPolicy, no StatefulSet, no init containers — out of scope for this deliverable.
 
 ## 4. Reproduce
 
 ```bash
 minikube start --driver=docker
-minikube image load aledanee/task-manager-api:1.0   # after: docker build -t aledanee/task-manager-api:1.0 app/backend
+minikube addons enable metrics-server                # required by the HPA
+minikube image load aledanee/task-manager-api:1.0     # after: docker build -t aledanee/task-manager-api:1.0 app/backend
 kubectl apply -k k8s/
-kubectl -n task-manager get pods,svc,pvc
-minikube service api -n task-manager --url          # or: kubectl -n task-manager port-forward svc/api 8080:8080
+kubectl -n task-manager get pods,svc,pvc,hpa
+minikube service api -n task-manager --url            # or: kubectl -n task-manager port-forward svc/api 8080:8080
+
+# optional: watch the HPA scale out under load
+kubectl -n task-manager run load --image=busybox:1.37 --restart=Never --command -- \
+  sh -c 'while true; do wget -qO- http://api:8080/api/tasks >/dev/null; done'
+watch kubectl -n task-manager get hpa
+kubectl -n task-manager delete pod load              # scale-down after the 300s window
 ```

@@ -13,6 +13,7 @@ Manifests that run the Deliverable 1 Task Manager API (`app/backend`) and MySQL 
 | `mysql-service.yaml` | Service | `ClusterIP` — internal only, reachable as `mysql:3306` |
 | `api-deployment.yaml` | Deployment | 2 replicas of the API, HTTP probes on `/health`, non-root |
 | `api-service.yaml` | Service | `NodePort 30080` → API on port 8080 |
+| `hpa.yaml` | HorizontalPodAutoscaler | scales the API 2 → 6 pods on 60% CPU |
 | `ingress.yaml` | Ingress | Optional host-based route (`task-manager.local`), needs ingress-nginx |
 | `kustomization.yaml` | Kustomization | `kubectl apply -k k8s/` applies everything in order |
 
@@ -46,9 +47,17 @@ curl http://localhost:8080/api/tasks
 
 ```bash
 kubectl -n task-manager get all                 # deployments, pods, services
+kubectl -n task-manager get hpa                 # autoscaler: CURRENT/60% TARGETS
 kubectl -n task-manager logs deploy/api         # API logs
-kubectl -n task-manager scale deploy/api --replicas=4
+kubectl -n task-manager scale deploy/api --replicas=4   # manual override (HPA resumes control after)
 kubectl -n task-manager delete pod -l app=api   # force a rolling restart
+```
+
+The HPA needs metrics:
+
+```bash
+minikube addons enable metrics-server           # minikube
+kubectl top pods -n task-manager                # sanity check that metrics flow
 ```
 
 ## Report
@@ -59,7 +68,7 @@ every choice: see **[REPORT.md](REPORT.md)**.
 ## Assumptions (Deliverable 2)
 
 * **Kubernetes version:** manifests use stable GA APIs (`apps/v1`, `v1`, `networking.k8s.io/v1`),
-  compatible with Kubernetes ≥ 1.19 (verified on v1.31).
+  compatible with Kubernetes ≥ 1.19 (verified on **Minikube, Kubernetes v1.37.0**).
 * **Image location:** the API image is referenced as `aledanee/task-manager-api:1.0`.
   Push it to a registry (`docker push`) for a remote cluster, or load the locally built image
   into a local cluster (`kind load docker-image …` / `minikube image load …`).
@@ -76,8 +85,10 @@ every choice: see **[REPORT.md](REPORT.md)**.
   `ConnectionStrings__DefaultConnection` (from the Secret, note the `__` nesting separator).
 * **Secrets are plaintext** `stringData` — acceptable for an exam; use Sealed/External Secrets
   or your platform's secret store in production.
-* **Scaling:** API is stateless → 2 replicas, safe to scale. MySQL stays at 1 replica
-  (single RWO volume, `Recreate` strategy); HA/StatefulSet is out of scope.
+* **Scaling:** API is stateless → 2 baseline replicas, autoscaled to a max of 6 by the HPA
+  (see `hpa.yaml`). MySQL stays at 1 replica (single RWO volume, `Recreate` strategy);
+  HA/StatefulSet is out of scope. The HPA requires `metrics-server`
+  (`minikube addons enable metrics-server`).
 * **Security context:** the API pod runs as the image's non-root `app` user (uid 1654),
   all capabilities dropped, no privilege escalation — consistent with the Deliverable 1 Dockerfile.
 * **Ingress** requires an ingress-nginx controller; without one the resource is inert.
