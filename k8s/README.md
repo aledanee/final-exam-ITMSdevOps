@@ -51,6 +51,11 @@ kubectl -n task-manager scale deploy/api --replicas=4
 kubectl -n task-manager delete pod -l app=api   # force a rolling restart
 ```
 
+## Report
+
+Deployment evidence (Minikube `kubectl` output), probe configuration and justification of
+every choice: see **[REPORT.md](REPORT.md)**.
+
 ## Assumptions (Deliverable 2)
 
 * **Kubernetes version:** manifests use stable GA APIs (`apps/v1`, `v1`, `networking.k8s.io/v1`),
