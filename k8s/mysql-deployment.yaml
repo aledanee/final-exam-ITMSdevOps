@@ -49,6 +49,12 @@ spec:
                 secretKeyRef:
                   name: task-manager-db
                   key: MYSQL_PASSWORD
+          # MySQL's default max_connections is 151, but 6 API pods using the driver's
+          # default pool (100/pod) = up to 600 claimants. Measured during load testing:
+          #   Max_used_connections 152 · Threads_connected 152 · Aborted_connects 573
+          #   MySqlException "Too many connections" at Program.cs:32 (a pod couldn't boot)
+          # The API side is capped at Maximum Pool Size=20 -> 6 x 20 = 120 < 500 here.
+          args: ["--max_connections=500"]
           readinessProbe:
             exec:
               command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$MYSQL_ROOT_PASSWORD\""]
