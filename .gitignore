@@ -3,3 +3,7 @@ obj/
 *.user
 .vs/
 app/mysql_data/
+
+# load test raw output — 440 MB total; k6-samples-run2.json alone is 234 MB,
+# which exceeds GitHub's 100 MB per-file limit and would be rejected on push.
+load/outputs/
